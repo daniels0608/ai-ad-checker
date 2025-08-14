@@ -1,0 +1,10 @@
+ad-pretest.<DEINE-DOMAIN> {
+  encode gzip
+  @api {
+    path /health
+    path /docs*
+    path /openapi.json
+    path /analyze/*
+  }
+  reverse_proxy @api app:8000
+}

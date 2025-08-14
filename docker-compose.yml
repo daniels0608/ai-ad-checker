@@ -1,0 +1,30 @@
+services:
+  app:
+    image: ghcr.io/<ORG>/<REPO>:latest  # oder lokal bauen (siehe README)
+    container_name: ad-pretest-app
+    environment:
+      - OUTPUT_DIR=/data
+      - API_KEY=${API_KEY:-}
+    volumes:
+      - ./data:/data
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    container_name: caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
