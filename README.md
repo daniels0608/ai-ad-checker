@@ -1,18 +1,26 @@
-# Ad-Pretest – Vercel (Client-only)
+# Ad-Pretest – Vercel (Client + Mini-API)
 
-**Zweck:** Vercel-fertiges Projekt (Next.js 14), das Bild-Ads **komplett im Browser** analysiert: Heatmap (Laplacian-Proxy), OCR (tesseract.js), einfache Scores. **Kein Server nötig** ⇒ sofort auf Vercel deploybar.
+**Features**
+- PNG/JPG Upload
+- OCR (tesseract.js), heuristische Saliency (Laplacian)
+- Optional: externe Heatmap per URL **über die eigene Proxy-API** einmischen
+- Vercel-fertig (Next.js 14 App Router, Edge Runtime für API)
 
-## Lokaler Start
+## Start lokal
 ```bash
-npm i # oder pnpm i / yarn
+npm i
 npm run dev
+# http://localhost:3000
 ```
-Öffne http://localhost:3000
 
-## Deploy auf Vercel
-1) Repository auf GitHub hochladen (Ordnerinhalt).
-2) In Vercel: **New Project → Import Git Repository**.
-3) Framework: **Next.js** (Autodetect), Build-Command: `next build`, Output: `.next` (default).
-4) Deploy. Fertig.
+## Deploy (Vercel)
+1) Repo nach GitHub hochladen.
+2) Vercel → New Project → Import.
+3) Optional Secret setzen: `HEATMAP_API_KEY` (falls externe API einen Bearer-Key braucht).
 
-> Hinweis: Diese Client-Version nutzt heuristische Saliency (Laplacian) und liefert solide, aber einfache Scores. Für präzisere Ergebnisse (Saliency-Modelle, CTA/Logo-Detection) nutze die **FastAPI-Variante** als API.
+## API
+- `GET /api/proxy-heatmap?url=<ENCODED_URL>` → Lädt ein Bild (PNG/JPG) und streamt es zurück.
+  - Wenn `HEATMAP_API_KEY` gesetzt ist, sendet die Route `Authorization: Bearer <KEY>` an die Upstream-API.
+
+## Fusion
+Der Client lädt optional eine externe Heatmap (via Proxy), normalisiert sie auf [0..1] und mischt sie mit der internen Saliency (`w=0.7` → kalibrierbar).

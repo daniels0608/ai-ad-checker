@@ -22,26 +22,17 @@ export default function Page() {
   const [scores, setScores] = useState<Scores | null>(null);
   const [heatmapDataUrl, setHeatmapDataUrl] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const [extHeatmapUrl, setExtHeatmapUrl] = useState<string>('');
   const imgRef = useRef<HTMLImageElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const heatmapRef = useRef<HTMLCanvasElement>(null);
 
   const log = (m: string) => setLogs(prev => [...prev, m]);
 
-  const onFile = (f: File | null) => {
-    if (!f) return;
-    const url = URL.createObjectURL(f);
-    setImgUrl(url);
-    setScores(null);
-    setHeatmapDataUrl(null);
-    setOcrWords([]);
-    setLogs([]);
-  };
-
-  // Simple Laplacian-based "saliency" map -> heat overlay
   const analyze = async () => {
     if (!imgRef.current || !canvasRef.current || !heatmapRef.current) return;
     setBusy(true);
+    setLogs([]);
     try {
       const img = imgRef.current;
       const cw = img.naturalWidth;
@@ -52,14 +43,12 @@ export default function Page() {
       ctx.drawImage(img, 0, 0, cw, ch);
       const imageData = ctx.getImageData(0, 0, cw, ch);
 
-      // Grayscale
       const gray = new Uint8ClampedArray(cw * ch);
       for (let i=0, j=0; i<imageData.data.length; i+=4, j++) {
         const r=imageData.data[i], g=imageData.data[i+1], b=imageData.data[i+2];
         gray[j] = (0.299*r + 0.587*g + 0.114*b) | 0;
       }
 
-      // Laplacian magnitude (edge intensity)
       const lap = new Float32Array(cw * ch);
       const k = [[0,1,0],[1,-4,1],[0,1,0]];
       const idx = (x:number,y:number)=> y*cw + x;
@@ -76,20 +65,47 @@ export default function Page() {
           lap[idx(x,y)] = Math.abs(v);
         }
       }
-      // Normalize
       let maxv = 0;
       for (let i=0;i<lap.length;i++) if (lap[i]>maxv) maxv = lap[i];
       const sal = new Float32Array(lap.length);
       for (let i=0;i<lap.length;i++) sal[i] = maxv ? lap[i]/maxv : 0;
 
-      // Heatmap canvas
+      let usedSal = sal;
+      if (extHeatmapUrl.trim().length>0) {
+        log('Hole externe Heatmap via API…');
+        const proxyUrl = `/api/proxy-heatmap?url=${encodeURIComponent(extHeatmapUrl.trim())}`;
+        const r = await fetch(proxyUrl, { cache: 'no-store' });
+        if (!r.ok) {
+          log('Externe Heatmap konnte nicht geladen werden, verwende interne.');
+        } else {
+          const blob = await r.blob();
+          const extImg = await createImageBitmap(blob);
+          const tmp = new OffscreenCanvas(cw, ch);
+          const tctx = tmp.getContext('2d')!;
+          tctx.drawImage(extImg, 0, 0, cw, ch);
+          const ext = tctx.getImageData(0,0,cw,ch).data;
+          const extArr = new Float32Array(cw*ch);
+          let emin=1e9, emax=-1e9;
+          for (let i=0,j=0;i<ext.length;i+=4,j++){
+            const v = 0.299*ext[i] + 0.587*ext[i+1] + 0.114*ext[i+2];
+            extArr[j]=v; if (v<emin) emin=v; if (v>emax) emax=v;
+          }
+          const range = Math.max(1e-6, emax-emin);
+          for (let i=0;i<extArr.length;i++) extArr[i] = (extArr[i]-emin)/range;
+          const w = 0.7;
+          const fused = new Float32Array(sal.length);
+          for (let i=0;i<sal.length;i++) fused[i] = w*extArr[i] + (1-w)*sal[i];
+          usedSal = fused;
+          log('Fusion mit externer Heatmap abgeschlossen.');
+        }
+      }
+
       const hcv = heatmapRef.current;
       hcv.width = cw; hcv.height = ch;
       const hctx = hcv.getContext('2d')!;
       const heatImg = hctx.createImageData(cw, ch);
-      for (let i=0;i<sal.length;i++) {
-        const v = sal[i];
-        // simple JET-like palette
+      for (let i=0;i<usedSal.length;i++) {
+        const v = usedSal[i];
         const r = Math.min(255, Math.max(0, 255*(v>0.5? (v-0.5)*2:0)));
         const g = Math.min(255, Math.max(0, v<0.5? 255*(v*2):255*(1-(v-0.5)*2)));
         const b = Math.min(255, Math.max(0, 255*(v<0.5? 1 - v*2:0)));
@@ -97,21 +113,16 @@ export default function Page() {
         heatImg.data[p] = r;
         heatImg.data[p+1] = g;
         heatImg.data[p+2] = b;
-        heatImg.data[p+3] = (v*180) | 0; // alpha
+        heatImg.data[p+3] = (v*180) | 0;
       }
       hctx.putImageData(heatImg, 0, 0);
 
-      // OCR via tesseract.js (deu+eng)
       log('Starte OCR…');
       const { data } = await Tesseract.recognize(canvas.toDataURL('image/png'), 'deu+eng');
       const words = (data.words || []).map(w => (w.text||'').trim()).filter(Boolean);
       setOcrWords(words);
       log(`OCR: ${words.length} Wörter`);
 
-      // Approx metrics
-      const textWords = words.length;
-
-      // Contrast ratio proxy via sampled luminance (min/max)
       let minL = 1e9, maxL = -1e9;
       const step = Math.max(4, Math.floor(Math.sqrt((cw*ch)/5000)));
       for (let y=0; y<ch; y+=step){
@@ -122,19 +133,14 @@ export default function Page() {
           if (L>maxL) maxL=L;
         }
       }
-      const contrastRatio = (maxL + 0.05) / (minL + 0.05); // 1..21 approx
+      const contrastRatio = (maxL + 0.05) / (minL + 0.05);
 
-      // Visual noise proxy: average saliency
-      const avgEdge = sal.reduce((a,b)=>a+b,0)/sal.length;
-      const visualNoise = Math.max(0, Math.min(1, avgEdge)); // 0..1
-
-      // Safe area focus (center 70%)
       const x0 = Math.floor(cw*0.15), y0 = Math.floor(ch*0.15);
       const x1 = Math.floor(cw*0.85), y1 = Math.floor(ch*0.85);
       let sumAll = 0, sumCenter = 0;
       for (let y=0;y<ch;y++) {
         for (let x=0;x<cw;x++) {
-          const v = sal[idx(x,y)];
+          const v = usedSal[idx(x,y)];
           sumAll += v;
           if (x>=x0 && x<x1 && y>=y0 && y<y1) sumCenter += v;
         }
@@ -143,16 +149,16 @@ export default function Page() {
 
       const res = computeScores({
         saliency_focus_ratio,
-        text_words: textWords,
-        visual_noise: visualNoise,
-        contrast_ratio: contrastRatio,
+        text_words: words.length,
+        visual_noise: Math.max(0, Math.min(1, usedSal.reduce((a,b)=>a+b,0)/usedSal.length)),
+        contrast_ratio: Math.max(1, Math.min(21, contrastRatio))
       });
       setScores(res.scores);
       setHeatmapDataUrl(hcv.toDataURL('image/png'));
       log('Analyse fertig.');
     } catch (e:any) {
       console.error(e);
-      log('Fehler bei der Analyse: ' + (e?.message || String(e)));
+      log('Fehler: ' + (e?.message || String(e)));
     } finally {
       setBusy(false);
     }
@@ -174,8 +180,8 @@ export default function Page() {
 
   return (
     <div>
-      <h1 style={{fontSize:28, fontWeight:700, marginBottom:10}}>Ad-Pretest (Client-only, Vercel-ready)</h1>
-      <p style={{opacity:.85, marginBottom:20}}>Lade ein Bild hoch, wir erzeugen eine Heatmap + Scores <i>im Browser</i> (OCR via Tesseract, Saliency via Laplace-Edges).</p>
+      <h1 style={{fontSize:28, fontWeight:700, marginBottom:10}}>Ad-Pretest (Client + Mini-API)</h1>
+      <p style={{opacity:.85, marginBottom:20}}>PNG/JPG hochladen → Heatmap & Scores im Browser. Optional: externe Heatmap-URL über unsere Proxy-API einmischen.</p>
 
       <div style={{display:'flex', gap:24, flexWrap:'wrap'}}>
         <div style={{flex:'1 1 380px'}}>
@@ -191,7 +197,6 @@ export default function Page() {
                 setOcrWords([]);
                 setLogs([]);
                 setTimeout(()=>{
-                  // draw preview on canvas also
                   const img = imgRef.current;
                   const c = canvasRef.current;
                   if (img && c) {
@@ -212,6 +217,17 @@ export default function Page() {
               <img ref={imgRef} src={imgUrl} alt="preview" style={{maxWidth:'100%', borderRadius:12}} />
             </div>
           )}
+
+          <input
+            type="url"
+            placeholder="Externe Heatmap-URL (PNG/JPG) – optional"
+            value={extHeatmapUrl}
+            onChange={(e)=>setExtHeatmapUrl(e.target.value)}
+            style={{display:'block', marginTop:12, width:'100%', padding:10, borderRadius:10, background:'#1f1f22', color:'#eaeaea', border:'1px solid #2a2a2d'}}
+          />
+          <p style={{fontSize:12, opacity:.7, marginTop:8}}>
+            JPG/JPEG/PNG werden unterstützt. Bei geschützten APIs kannst du einen Key in Vercel als <code>HEATMAP_API_KEY</code> setzen – der Proxy hängt ihn als Bearer an.
+          </p>
 
           <div style={{marginTop:16}}>
             <button

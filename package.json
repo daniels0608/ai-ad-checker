@@ -1,6 +1,6 @@
 {
-  "name": "ad-pretest-vercel",
-  "version": "1.0.2",
+  "name": "ad-pretest-full",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",

@@ -7,9 +7,8 @@ export function computeScores(v: { saliency_focus_ratio:number, text_words:numbe
   const contrastNorm = Math.max(0, Math.min(1, (v.contrast_ratio - 1)/20));
   const clarity = 100 * (0.45*(1-textPenalty) + 0.25*(1-noisePenalty) + 0.30*contrastNorm);
 
-  // CTA/Branding heuristics (client-only MVP)
-  const cta = 55 + 25*(1-noisePenalty); // proxy
-  const branding = 55; // neutral baseline
+  const cta = 55 + 25*(1-noisePenalty);
+  const branding = 55;
 
   const readability = 0.6*clarity + 0.4*attention;
   const visualNoiseInv = 100*(1 - clamp01(v.visual_noise));

@@ -1,4 +1,4 @@
-export const metadata = { title: "Ad Pretest (Vercel)", description: "Client-side ad pretest MVP" };
+export const metadata = { title: "Ad Pretest (Vercel + Mini-API)", description: "Client ad pretest with API proxy for external heatmaps" };
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="de">
